@@ -1,0 +1,6 @@
+@echo off
+echo Activating SpectrumViewer virtual environment...
+call .venv\Scripts\activate
+echo Starting SpectrumViewer...
+python -m specview.main
+pause

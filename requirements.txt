@@ -1,0 +1,19 @@
+# SpectrumViewer Dependencies
+# Python 3.11 recommended
+
+# GUI Framework
+PyQt6>=6.4.0
+
+# Plotting
+matplotlib>=3.7.0
+pyqtgraph>=0.13.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Excel Reading
+xlrd>=2.0.1
+
+# Optional: Origin integration (requires Origin 2019+)
+# originpro>=1.1.0
