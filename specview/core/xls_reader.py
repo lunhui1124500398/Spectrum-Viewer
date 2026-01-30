@@ -2,71 +2,12 @@
 XLS文件读取模块 - 读取Hitachi F-7000光谱仪导出的xls文件
 """
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 
-
-@dataclass
-class SpectrumData:
-    """光谱数据容器
-    
-    Attributes:
-        filepath: 文件完整路径
-        filename: 文件名
-        metadata: 仪器参数和扫描设置
-        wavelength: 波长数组 (nm)
-        intensity_raw: 原始各组强度数据
-        intensity_avg: 平均后的强度数据
-        num_scans: 扫描次数（数据组数）
-    """
-    filepath: str
-    filename: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    wavelength: np.ndarray = field(default_factory=lambda: np.array([]))
-    intensity_raw: List[np.ndarray] = field(default_factory=list)
-    intensity_avg: np.ndarray = field(default_factory=lambda: np.array([]))
-    num_scans: int = 0
-    
-    @property
-    def wavelength_range(self) -> Tuple[float, float]:
-        """返回波长范围 (min, max)"""
-        if len(self.wavelength) == 0:
-            return (0.0, 0.0)
-        return (float(self.wavelength.min()), float(self.wavelength.max()))
-    
-    @property
-    def intensity_range(self) -> Tuple[float, float]:
-        """返回平均强度范围 (min, max)"""
-        if len(self.intensity_avg) == 0:
-            return (0.0, 0.0)
-        return (float(self.intensity_avg.min()), float(self.intensity_avg.max()))
-    
-    def get_info_text(self) -> str:
-        """返回格式化的信息文本"""
-        wl_range = self.wavelength_range
-        int_range = self.intensity_range
-        
-        lines = [
-            f"文件: {self.filename}",
-            f"数据组数: {self.num_scans}",
-            f"波长范围: {wl_range[0]:.1f} - {wl_range[1]:.1f} nm",
-            f"强度范围: {int_range[0]:.2f} - {int_range[1]:.2f}",
-        ]
-        
-        # 添加关键元数据
-        if 'EX WL' in self.metadata:
-            lines.append(f"激发波长: {self.metadata['EX WL']}")
-        if 'EX Slit' in self.metadata:
-            lines.append(f"激发狭缝: {self.metadata['EX Slit']}")
-        if 'EM Slit' in self.metadata:
-            lines.append(f"发射狭缝: {self.metadata['EM Slit']}")
-        if 'PMT Voltage' in self.metadata:
-            lines.append(f"PMT电压: {self.metadata['PMT Voltage']}")
-            
-        return '\n'.join(lines)
+from .data_model import SpectrumData
 
 
 class XLSReader:
@@ -162,7 +103,8 @@ class XLSReader:
             wavelength=wavelength,
             intensity_raw=intensity_raw,
             intensity_avg=intensity_avg,
-            num_scans=len(data_sections)
+            num_scans=len(data_sections),
+            source_format='xls'
         )
     
     def read_files(self, filepaths: List[str]) -> List[SpectrumData]:

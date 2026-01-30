@@ -12,11 +12,12 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from matplotlib.ticker import AutoMinorLocator
+from matplotlib.ticker import AutoMinorLocator, NullLocator
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib.text import Text
 
-from ..core.xls_reader import SpectrumData
+from ..core.data_model import SpectrumData
 
 
 class SafeNavigationToolbar(NavigationToolbar):
@@ -155,6 +156,9 @@ class PlotCanvas(FigureCanvas):
     # 鼠标位置信号
     mouse_moved = pyqtSignal(float, float)  # wavelength, intensity
     
+    # 曲线点击信号
+    curve_clicked = pyqtSignal(str)  # filename
+    
     # 学术配色 - 与style_panel保持一致
     ACADEMIC_PALETTES = {
         'Nature': ['#E64B35', '#4DBBD5', '#00A087', '#3C5488', '#F39B7F', '#8491B4', '#91D1C2'],
@@ -178,7 +182,14 @@ class PlotCanvas(FigureCanvas):
         self.label_size = 12
         self.tick_size = 10
         self.title_size = 14
+        self.legend_size = 10  # 新增图例字体大小
         self.axis_linewidth = 1.0
+        
+        # 检测可用的中文字体（缓存结果）
+        self._chinese_font = self._detect_chinese_font()
+        
+        # 配置支持中文字体
+        self._configure_chinese_fonts()
         
         self._setup_style()
         
@@ -192,9 +203,88 @@ class PlotCanvas(FigureCanvas):
         
         # 鼠标跟踪
         self.mpl_connect('motion_notify_event', self._on_mouse_move)
+        self.mpl_connect('button_press_event', self._on_mouse_click)
+        self.mpl_connect('pick_event', self._on_pick)
         
         # 设置尺寸策略
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def _on_mouse_click(self, event):
+        """鼠标点击事件"""
+        # 处理双击 - 图例编辑
+        if event.dblclick and event.inaxes == self.ax:
+            legend = self.ax.get_legend()
+            if legend and legend.get_visible():
+                try:
+                    # 检查点击是否在图例范围内
+                    bbox = legend.get_window_extent()
+                    if bbox.contains(event.x, event.y):
+                        self._edit_legend_label()
+                except:
+                    pass
+
+    # def _on_double_click(self, event): # Removed invalid signal handler
+    
+    def _edit_legend_label(self):
+        """编辑图例标签对话框"""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QListWidgetItem, QDialogButtonBox, QAbstractItemView, QInputDialog
+        
+        # 弹出一个列表让用户选择要重命名的曲线，或者如果只有一个直接弹输入框
+        if not self.lines:
+            return
+            
+        filenames = list(self.lines.keys())
+        current_labels = [line.get_label() for line in self.lines.values()]
+        
+        item, ok = QInputDialog.getItem(self, "编辑图例", "选择要重命名的曲线:", 
+                                      [f"{l} ({f})" for l, f in zip(current_labels, filenames)], 0, False)
+        
+        if ok and item:
+            # 找到选中的索引
+            idx = [f"{l} ({f})" for l, f in zip(current_labels, filenames)].index(item)
+            filename = filenames[idx]
+            current_label = current_labels[idx]
+            
+            new_label, ok = QInputDialog.getText(self, "重命名", "输入新名称:", text=current_label)
+            if ok:
+                line = self.lines[filename]
+                line.set_label(new_label)
+                # 刷新图例
+                self.ax.legend(loc='best', framealpha=0.8, fontsize=self.tick_size)
+                self.draw()
+
+    def _on_pick(self, event):
+        """处理拾取事件 (点击曲线)"""
+        if isinstance(event.artist, Line2D):
+            # 查找对应的文件名
+            for filename, line in self.lines.items():
+                if line == event.artist:
+                    self.curve_clicked.emit(filename)
+                    break 
+
+    def _configure_chinese_fonts(self):
+        """配置Matplotlib以支持中文显示"""
+        import platform
+        system = platform.system()
+        
+        # 常见中文字体列表 (按优先级)
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'Heiti TC', 'PingFang SC', 'WenQuanYi Micro Hei', 'SimSun']
+        
+        # 查找系统可用字体
+        from matplotlib.font_manager import fontManager
+        available_fonts = set(f.name for f in fontManager.ttflist)
+        
+        found_font = None
+        for font in chinese_fonts:
+            if font in available_fonts:
+                found_font = font
+                break
+        
+        # 设置全局字体回退，确保中文不乱码
+        if found_font:
+            # 优先使用用户设定的字体，然后是中文字体作为fallback
+            matplotlib.rcParams['font.sans-serif'] = [self.font_family, found_font, 'Arial', 'DejaVu Sans']
+            matplotlib.rcParams['axes.unicode_minus'] = False # 解决负号显示为方块的问题
     
     def _setup_style(self):
         """设置样式"""
@@ -226,8 +316,9 @@ class PlotCanvas(FigureCanvas):
         self.ax.title.set_color(text_color)
         
         # 设置字体
-        self.ax.set_xlabel('Wavelength (nm)', fontsize=self.label_size, fontfamily=self.font_family)
-        self.ax.set_ylabel('Intensity (a.u.)', fontsize=self.label_size, fontfamily=self.font_family)
+        # 设置字体 (不强制fontfamily，允许回退)
+        self.ax.set_xlabel('Wavelength (nm)', fontsize=self.label_size)
+        self.ax.set_ylabel('Intensity (a.u.)', fontsize=self.label_size)
         self.ax.grid(True, alpha=0.3, color=grid_color)
         
         # 强制设置刻度字体大小，防止QFont warning
@@ -267,24 +358,113 @@ class PlotCanvas(FigureCanvas):
                 color=style.get('color'),
                 linewidth=style.get('linewidth', 1.5),
                 linestyle=style.get('linestyle', '-'),
-                label=filename.replace('.xls', '')
+                label=filename.replace('.xls', ''),
+                picker=5  # 确保重建时保留picker
             )
             self.lines[filename] = line
         
         # 恢复设置
         self.ax.set_xlim(xlim)
         self.ax.set_ylim(ylim)
-        self.ax.set_xlabel(xlabel, fontsize=self.label_size, fontfamily=self.font_family)
-        self.ax.set_ylabel(ylabel, fontsize=self.label_size, fontfamily=self.font_family)
-        self.ax.set_title(title, fontsize=self.title_size, fontfamily=self.font_family)
+        self.ax.set_xlabel(xlabel, fontsize=self.label_size)
+        self.ax.set_ylabel(ylabel, fontsize=self.label_size)
+        self.ax.set_title(title, fontsize=self.title_size)
         
         if self.lines:
             self.ax.legend(loc='best', framealpha=0.8)
         
         self.draw()
     
+    def _get_font_list(self, user_font: str) -> List[str]:
+        """获取字体回退列表"""
+        # 常见中文字体列表 (按优先级)
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'Heiti TC', 'PingFang SC', 'WenQuanYi Micro Hei', 'SimSun']
+        
+        # 构造列表：用户字体 -> 中文字体 -> 通用字体
+        font_list = [user_font]
+        font_list.extend(chinese_fonts)
+        font_list.extend(['Arial', 'DejaVu Sans', 'sans-serif'])
+        
+        # 移除重复项并保持顺序
+        seen = set()
+        final_list = []
+        for f in font_list:
+            if f not in seen:
+                seen.add(f)
+                final_list.append(f)
+        return final_list
+    
+    def _detect_chinese_font(self) -> str:
+        """检测系统中可用的中文字体
+        
+        Returns:
+            第一个可用的中文字体名称，如果没有则返回None
+        """
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'Heiti TC', 'PingFang SC', 
+                         'WenQuanYi Micro Hei', 'SimSun', 'FangSong', 'KaiTi']
+        
+        from matplotlib.font_manager import fontManager
+        available_fonts = set(f.name for f in fontManager.ttflist)
+        
+        for font in chinese_fonts:
+            if font in available_fonts:
+                return font
+        
+        return None
+
+    def _update_font_rcparams(self, font_family: str):
+        """更新matplotlib rcParams以确保中文字体回退正常工作
+        
+        此方法在预览和应用样式时都会调用，确保中文字符能正确显示。
+        
+        关键设置:
+        - font.family = 'sans-serif' 让matplotlib使用sans-serif字体族
+        - font.sans-serif = [用户字体, 中文字体, 通用字体] 定义回退顺序
+        """
+        # 常见中文字体列表 (按优先级)
+        chinese_fonts = ['Microsoft YaHei', 'SimHei', 'Heiti TC', 'PingFang SC', 'WenQuanYi Micro Hei', 'SimSun']
+        
+        # 查找系统可用的中文字体
+        from matplotlib.font_manager import fontManager
+        available_fonts = set(f.name for f in fontManager.ttflist)
+        
+        # 找到所有可用的中文字体
+        available_chinese = [f for f in chinese_fonts if f in available_fonts]
+        
+        # 构建字体回退列表
+        font_list = [font_family]
+        font_list.extend(available_chinese)  # 只添加可用的中文字体
+        font_list.extend(['Arial', 'DejaVu Sans', 'sans-serif'])
+        
+        # 移除重复项
+        seen = set()
+        unique_list = []
+        for f in font_list:
+            if f not in seen:
+                seen.add(f)
+                unique_list.append(f)
+        
+        # 设置rcParams - 关键是设置font.family为'sans-serif'
+        # 这样matplotlib会使用font.sans-serif列表进行字体查找和回退
+        matplotlib.rcParams['font.family'] = 'sans-serif'
+        matplotlib.rcParams['font.sans-serif'] = unique_list
+        matplotlib.rcParams['axes.unicode_minus'] = False
+        
+        # 强制重新构建font cache以确保新设置生效
+        try:
+            from matplotlib.font_manager import _rebuild
+            _rebuild()
+        except:
+            pass  # 旧版本可能没有这个函数
+
     def apply_style_config(self, config: Dict[str, Any]):
-        """应用完整的样式配置"""
+        """应用完整的样式配置
+        
+        支持:
+        - 全局字体设置 (font.family)
+        - 每个元素可独立覆盖字体 (font.title_font, font.label_font, font.tick_font, font.legend_font)
+        - 中文字体回退始终生效
+        """
         # 字体设置
         font_config = config.get('font', {})
         if 'family' in font_config:
@@ -295,8 +475,27 @@ class PlotCanvas(FigureCanvas):
             self.tick_size = max(1, font_config['tick_size'])
         if 'title_size' in font_config:
             self.title_size = max(1, font_config['title_size'])
+        if 'legend_size' in font_config:
+            self.legend_size = max(1, font_config['legend_size'])
         
-        # 字体样式
+        # 更新rcParams确保中文字体回退正常工作（修复预览时中文不显示的问题）
+        self._update_font_rcparams(self.font_family)
+        
+        # 获取每个元素的字体（支持独立覆盖）
+        # 如果未设置独立字体，则使用全局字体
+        title_font = font_config.get('title_font') or self.font_family
+        label_font = font_config.get('label_font') or self.font_family
+        tick_font = font_config.get('tick_font') or self.font_family
+        legend_font = font_config.get('legend_font') or self.font_family
+        
+        # 为了让中文字体回退正常工作，我们需要更新rcParams并且在设置字体时使用'sans-serif'
+        # 这样matplotlib会根据rcParams['font.sans-serif']列表进行字体查找和回退
+        # 用户指定的字体在该列表中排在最前面，所以会优先使用
+        
+        # 如果用户选择了独立字体，更新rcParams以该字体为最高优先级
+        # 注意：这里我们使用字体名称列表，但matplotlib对列表的回退支持有限
+        # 因此我们依赖rcParams全局设置来确保中文回退
+        
         # 字体样式 (分别获取)
         title_weight = 'bold' if font_config.get('title_bold', False) else 'normal'
         title_style = 'italic' if font_config.get('title_italic', False) else 'normal'
@@ -306,6 +505,9 @@ class PlotCanvas(FigureCanvas):
         
         tick_weight = 'bold' if font_config.get('tick_bold', False) else 'normal'
         tick_style = 'italic' if font_config.get('tick_italic', False) else 'normal'
+
+        legend_weight = 'bold' if font_config.get('legend_bold', False) else 'normal'
+        legend_style = 'italic' if font_config.get('legend_italic', False) else 'normal'
         
         # 坐标轴设置
         axes_config = config.get('axes', {})
@@ -318,23 +520,58 @@ class PlotCanvas(FigureCanvas):
         
         # 更新刻度样式 (包括大小和宽度)
         self.ax.tick_params(labelsize=self.tick_size, width=self.axis_linewidth)
+        # 更新次刻度宽度 (通常比主刻度细一点，或者设为相同)
+        self.ax.tick_params(which='minor', width=self.axis_linewidth * 0.6)
+        
+        # 确定每个元素使用的字体
+        # 优先使用用户指定的per-element字体，然后是全局字体
+        # 如果指定的字体不支持中文且文本包含中文，则使用中文字体
+        def get_font_for_text(user_font: str, text: str = "") -> str:
+            """为文本选择合适的字体
+            
+            Args:
+                user_font: 用户指定的字体
+                text: 要显示的文本
+            
+            Returns:
+                应该使用的字体名称
+            """
+            # 检查文本是否包含中文字符
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in text)
+            
+            # 如果文本包含中文且用户选择的不是中文字体
+            chinese_capable_fonts = {'Microsoft YaHei', 'SimHei', 'SimSun', 'FangSong', 
+                                     'KaiTi', 'Heiti TC', 'PingFang SC', 'WenQuanYi Micro Hei'}
+            
+            if has_chinese and user_font not in chinese_capable_fonts:
+                # 返回中文字体以确保正确显示
+                return self._chinese_font or user_font
+            
+            return user_font
         
         if 'xlabel' in axes_config:
-            self.ax.set_xlabel(axes_config['xlabel'], fontsize=self.label_size, 
-                              fontfamily=self.font_family, fontweight=label_weight, fontstyle=label_style)
+            xlabel_text = axes_config['xlabel']
+            xlabel_font = get_font_for_text(label_font, xlabel_text)
+            self.ax.set_xlabel(xlabel_text, fontsize=self.label_size, 
+                              fontweight=label_weight, fontstyle=label_style, fontname=xlabel_font)
         if 'ylabel' in axes_config:
-            self.ax.set_ylabel(axes_config['ylabel'], fontsize=self.label_size, 
-                              fontfamily=self.font_family, fontweight=label_weight, fontstyle=label_style)
+            ylabel_text = axes_config['ylabel']
+            ylabel_font = get_font_for_text(label_font, ylabel_text)
+            self.ax.set_ylabel(ylabel_text, fontsize=self.label_size, 
+                              fontweight=label_weight, fontstyle=label_style, fontname=ylabel_font)
         if 'title' in axes_config:
-            self.ax.set_title(axes_config['title'], fontsize=self.title_size, 
-                             fontfamily=self.font_family, fontweight=title_weight, fontstyle=title_style)
+            title_text = axes_config['title']
+            title_font_name = get_font_for_text(title_font, title_text)
+            self.ax.set_title(title_text, fontsize=self.title_size, 
+                             fontweight=title_weight, fontstyle=title_style, fontname=title_font_name)
         
-        # 应用字体加粗/斜体到刻度标签
+        # 应用字体样式到刻度标签（通常是数字，不需要中文字体）
         for label in self.ax.get_xticklabels() + self.ax.get_yticklabels():
             label.set_fontsize(self.tick_size)  # 必须设置fontsize，否则可能为-1导致QFont警告
             label.set_fontweight(tick_weight)
             label.set_fontstyle(tick_style)
-            label.set_fontfamily(self.font_family)
+            # 刻度标签使用用户指定的字体
+            label.set_fontname(tick_font)
             
         if axes_config.get('xlim'):
             self.ax.set_xlim(axes_config['xlim'])
@@ -357,6 +594,14 @@ class PlotCanvas(FigureCanvas):
         display_config = config.get('display', {})
         show_grid = display_config.get('grid', True)
         self.toggle_grid(show_grid)
+
+        # 次刻度控制
+        if display_config.get('minor_ticks'):
+            self.ax.xaxis.set_minor_locator(AutoMinorLocator())
+            self.ax.yaxis.set_minor_locator(AutoMinorLocator())
+        else:
+            self.ax.xaxis.set_minor_locator(NullLocator())
+            self.ax.yaxis.set_minor_locator(NullLocator())
         
         # 图例显示
         show_legend = display_config.get('legend', True)
@@ -364,11 +609,20 @@ class PlotCanvas(FigureCanvas):
         if show_legend:
             # 总是重新创建图例以确保颜色和样式同步
             if self.lines:
-                legend = self.ax.legend(loc='best', framealpha=0.8, fontsize=self.tick_size)
+                frameon = display_config.get('legend_frame', True)
+                legend = self.ax.legend(loc='best', frameon=frameon, framealpha=0.8, fontsize=self.legend_size)
                 legend.set_visible(True)
                 legend.set_draggable(True)
-                # 更新图例字体
-                plt.setp(legend.get_texts(), fontsize=self.tick_size, fontfamily=self.font_family)
+                # 更新图例字体样式
+                # 使用用户指定的legend_font，如果文件名包含中文则自动使用中文字体
+                for text in legend.get_texts():
+                    legend_text = text.get_text()
+                    legend_font_name = get_font_for_text(legend_font, legend_text)
+                    text.set_fontsize(self.legend_size)
+                    text.set_fontweight(legend_weight)
+                    text.set_fontstyle(legend_style)
+                    text.set_fontname(legend_font_name)
+
         else:
             legend = self.ax.get_legend()
             if legend:
@@ -433,7 +687,8 @@ class PlotCanvas(FigureCanvas):
             color=color,
             linewidth=linewidth,
             linestyle=linestyle,
-            label=label
+            label=label,
+            picker=5  # 启用拾取，容差5点
         )
         
         self.lines[data.filename] = line
@@ -570,6 +825,8 @@ class PlotCanvas(FigureCanvas):
 class PlotWidget(QWidget):
     """绑图组件（包含画布和工具栏）"""
     
+    curve_clicked = pyqtSignal(str) # 转发信号
+    
     def __init__(self, parent=None, dark_mode=True):
         super().__init__(parent)
         self.dark_mode = dark_mode
@@ -582,6 +839,7 @@ class PlotWidget(QWidget):
         
         # 创建画布
         self.canvas = PlotCanvas(self, dark_mode=self.dark_mode)
+        self.canvas.curve_clicked.connect(self.curve_clicked) # 转发信号
         
         # 添加matplotlib导航工具栏（用于缩放平移）- 使用安全版本避免QFont警告
         self.toolbar = SafeNavigationToolbar(self.canvas, self)

@@ -13,7 +13,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
 
-from ..core.xls_reader import SpectrumData, XLSReader
+from ..core.data_model import SpectrumData
+from ..core.xls_reader import XLSReader
 from ..core.origin_interface import OriginInterface
 from .file_panel import FilePanel
 from .plot_widget import PlotWidget
@@ -50,7 +51,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         
         # 状态栏初始信息
-        self.statusBar().showMessage("就绪 - 拖拽XLS文件到左侧面板开始")
+        self.statusBar().showMessage("就绪 - 拖拽光谱文件(XLS/SIF)到左侧面板开始")
     
     def _setup_ui(self):
         """设置UI布局"""
@@ -266,6 +267,21 @@ class MainWindow(QMainWindow):
         
         # 绘图鼠标位置
         self.plot_widget.canvas.mouse_moved.connect(self._update_status_coords)
+        # 曲线点击
+        self.plot_widget.curve_clicked.connect(self._on_curve_clicked)
+    
+    def _on_curve_clicked(self, filename: str):
+        """处理曲线点击事件"""
+        # 在叠加数据中查找对应的 SpectrumData
+        target_data = next((d for d in self.overlay_data if d.filename == filename), None)
+        
+        if target_data:
+            # 更新左侧文件面板选中(可选)
+            # self.file_panel.select_file(filename) 
+            
+            # 更新信息面板显示该曲线详情
+            self.info_panel.update_info(target_data)
+            self.statusBar().showMessage(f"选中: {filename}")
     
     def _on_file_selected(self, data: SpectrumData):
         """文件被选中（单击）"""
@@ -361,8 +377,8 @@ class MainWindow(QMainWindow):
     def _on_open_files(self):
         """打开文件"""
         files, _ = QFileDialog.getOpenFileNames(
-            self, "选择XLS文件", "",
-            "Excel文件 (*.xls);;所有文件 (*.*)"
+            self, "选择光谱文件", "",
+            "光谱文件 (*.xls *.sif);;Excel文件 (*.xls);;SIF文件 (*.sif);;所有文件 (*.*)"
         )
         if files:
             self.file_panel.load_files(files)
@@ -371,11 +387,14 @@ class MainWindow(QMainWindow):
         """打开文件夹"""
         folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if folder:
-            files = list(Path(folder).rglob('*.xls'))
+            folder_path = Path(folder)
+            files = []
+            for ext in ['*.xls', '*.sif']:
+                files.extend([str(f) for f in folder_path.rglob(ext)])
             if files:
-                self.file_panel.load_files([str(f) for f in files])
+                self.file_panel.load_files(files)
             else:
-                QMessageBox.information(self, "提示", "该文件夹中没有找到XLS文件")
+                QMessageBox.information(self, "提示", "该文件夹中没有找到光谱文件 (XLS/SIF)")
     
     def _on_export_csv_single(self):
         """导出单文件CSV"""

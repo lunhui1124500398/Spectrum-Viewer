@@ -238,9 +238,9 @@ class StylePanel(QWidget):
         font_group = QGroupBox("字体设置")
         font_layout = QVBoxLayout(font_group)
         
-        # 字体选择
+        # 全局字体选择
         font_sel_layout = QHBoxLayout()
-        font_sel_layout.addWidget(QLabel("字体族:"))
+        font_sel_layout.addWidget(QLabel("全局字体:"))
         self.combo_font = QComboBox()
         self.combo_font.addItems(self.FONT_FAMILIES)
         self.combo_font.currentTextChanged.connect(self._emit_if_live)
@@ -253,6 +253,7 @@ class StylePanel(QWidget):
         grid.addWidget(QLabel("大小"), 0, 1)
         grid.addWidget(QLabel("加粗"), 0, 2)
         grid.addWidget(QLabel("斜体"), 0, 3)
+        grid.addWidget(QLabel("独立字体"), 0, 4)  # 新增列
         
         # 1. 标题
         grid.addWidget(QLabel("标题"), 1, 0)
@@ -270,6 +271,20 @@ class StylePanel(QWidget):
         self.check_title_italic.toggled.connect(self._emit_if_live)
         grid.addWidget(self.check_title_italic, 1, 3)
         
+        # 标题独立字体
+        title_font_layout = QHBoxLayout()
+        self.check_title_font = QCheckBox()
+        self.check_title_font.toggled.connect(self._on_title_font_toggled)
+        title_font_layout.addWidget(self.check_title_font)
+        self.combo_title_font = QComboBox()
+        self.combo_title_font.addItems(self.FONT_FAMILIES)
+        self.combo_title_font.setEnabled(False)
+        self.combo_title_font.currentTextChanged.connect(self._emit_if_live)
+        title_font_layout.addWidget(self.combo_title_font)
+        title_font_widget = QWidget()
+        title_font_widget.setLayout(title_font_layout)
+        grid.addWidget(title_font_widget, 1, 4)
+        
         # 2. 轴标签 (X/Y Label)
         grid.addWidget(QLabel("轴标签"), 2, 0)
         self.spin_label_size = QSpinBox()
@@ -285,6 +300,20 @@ class StylePanel(QWidget):
         self.check_label_italic = QCheckBox()
         self.check_label_italic.toggled.connect(self._emit_if_live)
         grid.addWidget(self.check_label_italic, 2, 3)
+        
+        # 轴标签独立字体
+        label_font_layout = QHBoxLayout()
+        self.check_label_font = QCheckBox()
+        self.check_label_font.toggled.connect(self._on_label_font_toggled)
+        label_font_layout.addWidget(self.check_label_font)
+        self.combo_label_font = QComboBox()
+        self.combo_label_font.addItems(self.FONT_FAMILIES)
+        self.combo_label_font.setEnabled(False)
+        self.combo_label_font.currentTextChanged.connect(self._emit_if_live)
+        label_font_layout.addWidget(self.combo_label_font)
+        label_font_widget = QWidget()
+        label_font_widget.setLayout(label_font_layout)
+        grid.addWidget(label_font_widget, 2, 4)
         
         # 3. 刻度 (Ticks)
         grid.addWidget(QLabel("刻度"), 3, 0)
@@ -302,6 +331,50 @@ class StylePanel(QWidget):
         self.check_tick_italic.toggled.connect(self._emit_if_live)
         grid.addWidget(self.check_tick_italic, 3, 3)
         
+        # 刻度独立字体
+        tick_font_layout = QHBoxLayout()
+        self.check_tick_font = QCheckBox()
+        self.check_tick_font.toggled.connect(self._on_tick_font_toggled)
+        tick_font_layout.addWidget(self.check_tick_font)
+        self.combo_tick_font = QComboBox()
+        self.combo_tick_font.addItems(self.FONT_FAMILIES)
+        self.combo_tick_font.setEnabled(False)
+        self.combo_tick_font.currentTextChanged.connect(self._emit_if_live)
+        tick_font_layout.addWidget(self.combo_tick_font)
+        tick_font_widget = QWidget()
+        tick_font_widget.setLayout(tick_font_layout)
+        grid.addWidget(tick_font_widget, 3, 4)
+        
+        # 4. 图例 (Legend)
+        grid.addWidget(QLabel("图例"), 4, 0)
+        self.spin_legend_size = QSpinBox()
+        self.spin_legend_size.setRange(6, 20)
+        self.spin_legend_size.setValue(10)
+        self.spin_legend_size.valueChanged.connect(self._emit_if_live)
+        grid.addWidget(self.spin_legend_size, 4, 1)
+
+        self.check_legend_bold = QCheckBox()
+        self.check_legend_bold.toggled.connect(self._emit_if_live)
+        grid.addWidget(self.check_legend_bold, 4, 2)
+
+        self.check_legend_italic = QCheckBox()
+        self.check_legend_italic.toggled.connect(self._emit_if_live)
+        grid.addWidget(self.check_legend_italic, 4, 3)
+        
+        # 图例独立字体
+        legend_font_layout = QHBoxLayout()
+        self.check_legend_font = QCheckBox()
+        self.check_legend_font.toggled.connect(self._on_legend_font_toggled)
+        legend_font_layout.addWidget(self.check_legend_font)
+        self.combo_legend_font = QComboBox()
+        self.combo_legend_font.addItems(self.FONT_FAMILIES)
+        self.combo_legend_font.setEnabled(False)
+        self.combo_legend_font.currentTextChanged.connect(self._emit_if_live)
+        legend_font_layout.addWidget(self.combo_legend_font)
+        legend_font_widget = QWidget()
+        legend_font_widget.setLayout(legend_font_layout)
+        grid.addWidget(legend_font_widget, 4, 4)
+
         font_layout.addLayout(grid)
         global_layout.addWidget(font_group)
         
@@ -383,6 +456,11 @@ class StylePanel(QWidget):
         self.check_legend.setChecked(True)
         self.check_legend.toggled.connect(self._emit_if_live)
         display_layout.addWidget(self.check_legend)
+        
+        self.check_legend_frame = QCheckBox("显示图例边框")
+        self.check_legend_frame.setChecked(True)
+        self.check_legend_frame.toggled.connect(self._emit_if_live)
+        display_layout.addWidget(self.check_legend_frame)
         
         self.check_minor_ticks = QCheckBox("显示次刻度")
         self.check_minor_ticks.setChecked(False)
@@ -508,6 +586,26 @@ class StylePanel(QWidget):
         self.spin_ymax.setEnabled(not checked)
         self._emit_if_live()
     
+    def _on_title_font_toggled(self, checked: bool):
+        """标题独立字体开关"""
+        self.combo_title_font.setEnabled(checked)
+        self._emit_if_live()
+    
+    def _on_label_font_toggled(self, checked: bool):
+        """轴标签独立字体开关"""
+        self.combo_label_font.setEnabled(checked)
+        self._emit_if_live()
+    
+    def _on_tick_font_toggled(self, checked: bool):
+        """刻度独立字体开关"""
+        self.combo_tick_font.setEnabled(checked)
+        self._emit_if_live()
+    
+    def _on_legend_font_toggled(self, checked: bool):
+        """图例独立字体开关"""
+        self.combo_legend_font.setEnabled(checked)
+        self._emit_if_live()
+    
     def _emit_if_live(self):
         """如果实时预览开启则发送信号"""
         if self.live_preview:
@@ -529,6 +627,7 @@ class StylePanel(QWidget):
         label_size = max(1, self.spin_label_size.value())
         tick_size = max(1, self.spin_tick_size.value())
         title_size = max(1, self.spin_title_size.value())
+        legend_size = max(1, self.spin_legend_size.value())
         
         config = {
             'palette': self.combo_palette.currentText(),
@@ -537,12 +636,20 @@ class StylePanel(QWidget):
                 'label_size': label_size,
                 'tick_size': tick_size,
                 'title_size': title_size,
+                'legend_size': legend_size,
                 'title_bold': self.check_title_bold.isChecked(),
                 'title_italic': self.check_title_italic.isChecked(),
                 'label_bold': self.check_label_bold.isChecked(),
                 'label_italic': self.check_label_italic.isChecked(),
                 'tick_bold': self.check_tick_bold.isChecked(),
                 'tick_italic': self.check_tick_italic.isChecked(),
+                'legend_bold': self.check_legend_bold.isChecked(),
+                'legend_italic': self.check_legend_italic.isChecked(),
+                # 独立字体设置（仅当复选框选中时才包含）
+                'title_font': self.combo_title_font.currentText() if self.check_title_font.isChecked() else None,
+                'label_font': self.combo_label_font.currentText() if self.check_label_font.isChecked() else None,
+                'tick_font': self.combo_tick_font.currentText() if self.check_tick_font.isChecked() else None,
+                'legend_font': self.combo_legend_font.currentText() if self.check_legend_font.isChecked() else None,
             },
             'axes': {
                 'xlabel': self.edit_xlabel.text(),
@@ -555,6 +662,7 @@ class StylePanel(QWidget):
             'display': {
                 'grid': self.check_grid.isChecked(),
                 'legend': self.check_legend.isChecked(),
+                'legend_frame': self.check_legend_frame.isChecked(),
                 'minor_ticks': self.check_minor_ticks.isChecked(),
             },
             'lines': line_styles,
@@ -579,6 +687,8 @@ class StylePanel(QWidget):
             self.spin_tick_size.setValue(font['tick_size'])
         if 'title_size' in font:
             self.spin_title_size.setValue(font['title_size'])
+        if 'legend_size' in font:
+            self.spin_legend_size.setValue(font['legend_size'])
             
         self.check_title_bold.setChecked(font.get('title_bold', False))
         self.check_title_italic.setChecked(font.get('title_italic', False))
@@ -586,6 +696,33 @@ class StylePanel(QWidget):
         self.check_label_italic.setChecked(font.get('label_italic', False))
         self.check_tick_bold.setChecked(font.get('tick_bold', False))
         self.check_tick_italic.setChecked(font.get('tick_italic', False))
+        self.check_legend_bold.setChecked(font.get('legend_bold', False))
+        self.check_legend_italic.setChecked(font.get('legend_italic', False))
+        
+        # 恢复独立字体设置
+        if font.get('title_font'):
+            self.check_title_font.setChecked(True)
+            self.combo_title_font.setCurrentText(font['title_font'])
+        else:
+            self.check_title_font.setChecked(False)
+        
+        if font.get('label_font'):
+            self.check_label_font.setChecked(True)
+            self.combo_label_font.setCurrentText(font['label_font'])
+        else:
+            self.check_label_font.setChecked(False)
+        
+        if font.get('tick_font'):
+            self.check_tick_font.setChecked(True)
+            self.combo_tick_font.setCurrentText(font['tick_font'])
+        else:
+            self.check_tick_font.setChecked(False)
+        
+        if font.get('legend_font'):
+            self.check_legend_font.setChecked(True)
+            self.combo_legend_font.setCurrentText(font['legend_font'])
+        else:
+            self.check_legend_font.setChecked(False)
         
         axes = config.get('axes', {})
         if 'xlabel' in axes:
@@ -614,6 +751,8 @@ class StylePanel(QWidget):
             self.check_grid.setChecked(display['grid'])
         if 'legend' in display:
             self.check_legend.setChecked(display['legend'])
+        if 'legend_frame' in display:
+            self.check_legend_frame.setChecked(display['legend_frame'])
         if 'minor_ticks' in display:
             self.check_minor_ticks.setChecked(display['minor_ticks'])
         
@@ -668,26 +807,30 @@ class StylePanel(QWidget):
         templates = {
             '默认暗色': {
                 'palette': 'Nature',
-                'font': {'family': 'Arial', 'label_size': 12, 'tick_size': 10, 'title_size': 14},
+                'palette': 'Nature',
+                'font': {'family': 'Arial', 'label_size': 12, 'tick_size': 10, 'title_size': 14, 'legend_size': 10},
                 'axes': {'xlabel': 'Wavelength (nm)', 'ylabel': 'Intensity (a.u.)', 'title': '', 'xlim': None, 'ylim': None, 'linewidth': 1.0},
                 'display': {'grid': True, 'legend': True, 'minor_ticks': False},
             },
             '发表级(白底)': {
                 'palette': '灰度',
-                'font': {'family': 'Arial', 'label_size': 14, 'tick_size': 12, 'title_size': 16},
+                'palette': '灰度',
+                'font': {'family': 'Arial', 'label_size': 14, 'tick_size': 12, 'title_size': 16, 'legend_size': 12},
                 'axes': {'xlabel': 'Wavelength (nm)', 'ylabel': 'Intensity (a.u.)', 'title': '', 'xlim': None, 'ylim': None, 'linewidth': 1.5},
                 'display': {'grid': False, 'legend': True, 'minor_ticks': True},
             },
             '演示级': {
                 'palette': 'Science',
-                'font': {'family': 'Arial', 'label_size': 16, 'tick_size': 14, 'title_size': 20},
+                'palette': 'Science',
+                'font': {'family': 'Arial', 'label_size': 16, 'tick_size': 14, 'title_size': 20, 'legend_size': 14},
                 'axes': {'xlabel': 'Wavelength (nm)', 'ylabel': 'Intensity (a.u.)', 'title': '', 'xlim': None, 'ylim': None, 'linewidth': 1.5},
                 'display': {'grid': True, 'legend': True, 'minor_ticks': False},
             },
             'PPT友好': {
                 'palette': 'NEJM',
+                'palette': 'NEJM',
                 'font': {
-                    'family': 'Calibri', 'label_size': 18, 'tick_size': 14, 'title_size': 22,
+                    'family': 'Calibri', 'label_size': 18, 'tick_size': 14, 'title_size': 22, 'legend_size': 16,
                     'title_bold': True, 'label_bold': True, 'tick_bold': True
                 },
                 'axes': {'xlabel': 'Wavelength (nm)', 'ylabel': 'Intensity (a.u.)', 'title': '', 'xlim': None, 'ylim': None, 'linewidth': 2.0},

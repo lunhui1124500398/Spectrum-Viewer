@@ -15,5 +15,8 @@ pandas>=2.0.0
 # Excel Reading
 xlrd>=2.0.1
 
+# SIF File Reading (Andor format)
+sif_parser>=1.0.0
+
 # Optional: Origin integration (requires Origin 2019+)
 # originpro>=1.1.0

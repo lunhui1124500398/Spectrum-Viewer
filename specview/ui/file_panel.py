@@ -11,7 +11,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QAction
 
-from ..core.xls_reader import XLSReader, SpectrumData
+from ..core.data_model import SpectrumData
+from ..core.xls_reader import XLSReader
+from ..core.sif_reader import SIFReader, SIF_AVAILABLE
+
+# Supported file extensions
+SUPPORTED_EXTENSIONS = {'.xls', '.sif'}
 
 
 class DropZone(QWidget):
@@ -28,16 +33,17 @@ class DropZone(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        self.label = QLabel("📂 拖拽XLS文件到此处\n或点击下方按钮选择文件")
+        self.label = QLabel("📂 拖拽光谱文件到此处\n支持 XLS / SIF 格式")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("color: #a0a0a0; font-size: 12px;")
         layout.addWidget(self.label)
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
-            # 检查是否有xls文件
+            # 检查是否有支持的文件格式
             for url in event.mimeData().urls():
-                if url.toLocalFile().lower().endswith('.xls'):
+                suffix = Path(url.toLocalFile()).suffix.lower()
+                if suffix in SUPPORTED_EXTENSIONS:
                     event.acceptProposedAction()
                     self.setStyleSheet("border-color: #e94560; background-color: #1e1e3e;")
                     return
@@ -51,12 +57,14 @@ class DropZone(QWidget):
         files = []
         for url in event.mimeData().urls():
             path = url.toLocalFile()
-            if path.lower().endswith('.xls'):
+            path_obj = Path(path)
+            if path_obj.suffix.lower() in SUPPORTED_EXTENSIONS:
                 files.append(path)
-            elif Path(path).is_dir():
-                # 如果是文件夹，搜索其中的xls文件
-                for xls_file in Path(path).rglob('*.xls'):
-                    files.append(str(xls_file))
+            elif path_obj.is_dir():
+                # 如果是文件夹，搜索其中的光谱文件
+                for ext in SUPPORTED_EXTENSIONS:
+                    for found_file in path_obj.rglob(f'*{ext}'):
+                        files.append(str(found_file))
         
         if files:
             self.files_dropped.emit(files)
@@ -98,7 +106,8 @@ class FilePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("FilePanel")
-        self.reader = XLSReader()
+        self.xls_reader = XLSReader()
+        self.sif_reader = SIFReader() if SIF_AVAILABLE else None
         self.loaded_files: Set[str] = set()  # 已加载的文件路径集合
         
         self._setup_ui()
@@ -123,11 +132,11 @@ class FilePanel(QWidget):
         btn_layout = QHBoxLayout()
         
         self.btn_open_files = QPushButton("📄 选择文件")
-        self.btn_open_files.setToolTip("选择一个或多个XLS文件 (Ctrl+O)")
+        self.btn_open_files.setToolTip("选择光谱文件 (XLS/SIF) (Ctrl+O)")
         btn_layout.addWidget(self.btn_open_files)
         
         self.btn_open_folder = QPushButton("📁 选择文件夹")
-        self.btn_open_folder.setToolTip("选择文件夹，导入其中所有XLS文件 (Ctrl+Shift+O)")
+        self.btn_open_folder.setToolTip("选择文件夹，导入其中所有光谱文件 (Ctrl+Shift+O)")
         btn_layout.addWidget(self.btn_open_folder)
         
         layout.addLayout(btn_layout)
@@ -178,8 +187,8 @@ class FilePanel(QWidget):
     def _on_open_files(self):
         """打开文件对话框"""
         files, _ = QFileDialog.getOpenFileNames(
-            self, "选择XLS文件", "",
-            "Excel文件 (*.xls);;所有文件 (*.*)"
+            self, "选择光谱文件", "",
+            "光谱文件 (*.xls *.sif);;Excel文件 (*.xls);;SIF文件 (*.sif);;所有文件 (*.*)"
         )
         if files:
             self.load_files(files)
@@ -188,11 +197,14 @@ class FilePanel(QWidget):
         """打开文件夹对话框"""
         folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if folder:
-            files = list(Path(folder).rglob('*.xls'))
+            files = []
+            folder_path = Path(folder)
+            for ext in SUPPORTED_EXTENSIONS:
+                files.extend([str(f) for f in folder_path.rglob(f'*{ext}')])
             if files:
-                self.load_files([str(f) for f in files])
+                self.load_files(files)
             else:
-                QMessageBox.information(self, "提示", "该文件夹中没有找到XLS文件")
+                QMessageBox.information(self, "提示", "该文件夹中没有找到光谱文件 (XLS/SIF)")
     
     def load_files(self, filepaths: List[str]):
         """加载文件列表
@@ -209,7 +221,17 @@ class FilePanel(QWidget):
                 continue
             
             try:
-                data = self.reader.read_file(filepath)
+                # 根据扩展名选择读取器
+                suffix = Path(filepath).suffix.lower()
+                if suffix == '.sif':
+                    if self.sif_reader is None:
+                        raise ImportError("SIF读取器不可用，请安装 sif_parser: pip install sif_parser")
+                    data = self.sif_reader.read_file(filepath)
+                elif suffix == '.xls':
+                    data = self.xls_reader.read_file(filepath)
+                else:
+                    raise ValueError(f"不支持的文件格式: {suffix}")
+                
                 item = FileListItem(data)
                 self.file_list.addItem(item)
                 self.loaded_files.add(filepath)
@@ -226,6 +248,29 @@ class FilePanel(QWidget):
                 f"成功加载 {loaded_count} 个文件\n"
                 f"失败 {error_count} 个文件"
             )
+        
+        # 自然排序
+        self._sort_file_list()
+
+    def _sort_file_list(self):
+        """对文件列表进行自然排序"""
+        import re
+        
+        def natural_key(text):
+            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+        
+        # 获取并移除所有项目，保留对象
+        items = []
+        while self.file_list.count() > 0:
+            items.append(self.file_list.takeItem(0))
+        
+        # 排序
+        items.sort(key=lambda item: natural_key(item.spectrum_data.filename))
+        
+        # 重新添加
+        for item in items:
+            self.file_list.addItem(item)
+
     
     def _update_stats(self):
         """更新统计信息"""
