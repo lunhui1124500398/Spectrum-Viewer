@@ -16,10 +16,17 @@ from PyQt6.QtGui import QAction, QKeySequence, QIcon
 from ..core.data_model import SpectrumData
 from ..core.xls_reader import XLSReader
 from ..core.origin_interface import OriginInterface
+from ..core.project_manager import ProjectManager
+from ..core.processing_chain import ProcessingChain, ProcessingStep, PluginRegistry
+from ..plugins.base import ProcessingPlugin
 from .file_panel import FilePanel
 from .plot_widget import PlotWidget
 from .style_panel import StylePanel
 from .info_panel import InfoPanel
+from .data_table_widget import DataTableWidget
+from .plugin_param_dialog import PluginParamDialog
+from PyQt6.QtWidgets import QDockWidget
+
 
 
 class MainWindow(QMainWindow):
@@ -43,7 +50,17 @@ class MainWindow(QMainWindow):
         # Origin接口
         self.origin_interface = OriginInterface()
         
+        # 项目管理器
+        self.project_manager = ProjectManager()
+        
+        # 处理链路管理器
+        self.processing_chain = ProcessingChain()
+        
+        # 注册内置插件
+        PluginRegistry.discover_builtin()
+        
         self._setup_ui()
+
         self._setup_menu()
         self._setup_toolbar()
         self._setup_shortcuts()
@@ -101,6 +118,16 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(self.splitter)
         
+        # 数据表格面板 (Bottom Dock)
+        self.dock_data_table = QDockWidget("数据表格", self)
+        self.dock_data_table.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.data_table_widget = DataTableWidget()
+        self.dock_data_table.setWidget(self.data_table_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.dock_data_table)
+        
+        # 默认隐藏，或者显示? 根据用户习惯，暂时显示
+
+        
         # 状态栏
         self.setStatusBar(QStatusBar())
     
@@ -117,9 +144,23 @@ class MainWindow(QMainWindow):
         
         action_open_folder = file_menu.addAction("打开文件夹...")
         action_open_folder.setShortcut("Ctrl+Shift+O")
+        action_open_folder = file_menu.addAction("打开文件夹...")
+        action_open_folder.setShortcut("Ctrl+Shift+O")
         action_open_folder.triggered.connect(self._on_open_folder)
         
         file_menu.addSeparator()
+        
+        # 项目操作
+        action_save_project = file_menu.addAction("保存项目...")
+        action_save_project.setShortcut("Ctrl+Shift+S")
+        action_save_project.triggered.connect(self._on_save_project)
+        
+        action_open_project = file_menu.addAction("打开项目...")
+        action_open_project.setShortcut("Ctrl+Shift+L") # L for Load Project
+        action_open_project.triggered.connect(self._on_open_project)
+        
+        file_menu.addSeparator()
+
         
         # 导出子菜单
         export_menu = file_menu.addMenu("导出")
@@ -156,6 +197,16 @@ class MainWindow(QMainWindow):
         
         view_menu.addSeparator()
         
+        action_show_table = view_menu.addAction("数据表格面板")
+        action_show_table.setCheckable(True)
+        action_show_table.setChecked(True)
+        action_show_table.toggled.connect(self.dock_data_table.setVisible)
+        # 连接 dock 的 visibilityChanged 信号来同步菜单状态 (稍后在 _connect_signals 中)
+        self.action_show_table = action_show_table
+        
+        view_menu.addSeparator()
+
+        
         self.action_grid = view_menu.addAction("显示网格")
         self.action_grid.setCheckable(True)
         self.action_grid.setChecked(True)
@@ -177,7 +228,14 @@ class MainWindow(QMainWindow):
         
         action_load_template = template_menu.addAction("加载模板...")
         action_load_template.setShortcut("Ctrl+Shift+T")
+        action_load_template = template_menu.addAction("加载模板...")
+        action_load_template.setShortcut("Ctrl+Shift+T")
         action_load_template.triggered.connect(self.style_panel._load_template)
+        
+        # 处理/插件菜单
+        process_menu = menubar.addMenu("处理(&P)")
+        self._setup_process_menu(process_menu)
+
         
         # 帮助菜单
         help_menu = menubar.addMenu("帮助(&H)")
@@ -269,6 +327,78 @@ class MainWindow(QMainWindow):
         self.plot_widget.canvas.mouse_moved.connect(self._update_status_coords)
         # 曲线点击
         self.plot_widget.curve_clicked.connect(self._on_curve_clicked)
+        
+        # Dock 可见性变化
+        self.dock_data_table.visibilityChanged.connect(self.action_show_table.setChecked)
+
+    def _setup_process_menu(self, menu: QMenu):
+        """动态构建处理菜单"""
+        plugins = PluginRegistry.get_all()
+        if not plugins:
+            menu.addAction("无可用插件").setEnabled(False)
+            return
+            
+        # 按分类分组
+        categories = {}
+        for name, plugin in plugins.items():
+            cat = plugin.category
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(plugin)
+            
+        for cat, plugs in categories.items():
+            cat_menu = menu.addMenu(cat)
+            for plugin in plugs:
+                action = cat_menu.addAction(plugin.display_name)
+                # 使用 lambda 捕获 plugin 实例
+                action.triggered.connect(lambda checked, p=plugin: self._on_run_plugin(p))
+    
+    def _on_run_plugin(self, plugin: ProcessingPlugin):
+        """运行插件"""
+        if not self.current_data:
+            QMessageBox.warning(self, "提示", "请先选择一个光谱数据")
+            return
+            
+        # 弹出参数对话框
+        dialog = PluginParamDialog(plugin, self)
+        if dialog.exec():
+            params = dialog.get_params()
+            
+            # 运行处理
+            try:
+                # 记录步骤
+                from datetime import datetime
+                step = ProcessingStep(
+                    step_type=plugin.name,
+                    timestamp=datetime.now().isoformat(),
+                    params=params,
+                    plugin_version=plugin.version,
+                    description=f"Executed {plugin.display_name}"
+                )
+                
+                # 执行处理 (可能会修改 current_data 或返回新的)
+                # 这里假设 modify in-place 或 copy
+                # 为了安全，建议 copy
+                # 但目前没有 deepcopy 实现，暂且 modify in-place
+                
+                plugin.process(self.current_data, **params)
+                
+                # 添加到处理链路
+                self.processing_chain.add_step(self.current_data.filename, step)
+                
+                # 更新 UI
+                # 重新绘图
+                self.plot_widget.plot_spectrum(self.current_data)
+                # 更新表格
+                self.data_table_widget.set_data(self.current_data)
+                # 更新信息面板
+                self.info_panel.update_info(self.current_data)
+                
+                self.statusBar().showMessage(f"处理完成: {plugin.display_name}")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "处理失败", f"插件执行出错:\n{e}")
+
     
     def _on_curve_clicked(self, filename: str):
         """处理曲线点击事件"""
@@ -294,8 +424,12 @@ class MainWindow(QMainWindow):
         # 绘制
         self.plot_widget.plot_spectrum(data)
         
+        # 更新数据表格
+        self.data_table_widget.set_data(data)
+        
         # 更新状态栏
         self.statusBar().showMessage(f"显示: {data.filename}")
+
     
     def _on_overlay_requested(self, data_list: List[SpectrumData]):
         """请求叠加显示"""
@@ -540,14 +674,85 @@ class MainWindow(QMainWindow):
 <table>
 <tr><td><b>Ctrl+O</b></td><td>打开文件</td></tr>
 <tr><td><b>Ctrl+Shift+O</b></td><td>打开文件夹</td></tr>
+<tr><td><b>Ctrl+Shift+L</b></td><td>打开项目</td></tr>
+<tr><td><b>Ctrl+Shift+S</b></td><td>保存项目</td></tr>
 <tr><td><b>Ctrl+E</b></td><td>导出CSV (单文件)</td></tr>
 <tr><td><b>Ctrl+Shift+E</b></td><td>导出CSV (合并)</td></tr>
 <tr><td><b>Ctrl+S</b></td><td>保存图像</td></tr>
 <tr><td><b>Ctrl+0</b></td><td>重置视图</td></tr>
 <tr><td><b>G</b></td><td>切换网格</td></tr>
 <tr><td><b>L</b></td><td>切换图例</td></tr>
-<tr><td><b>Ctrl+T</b></td><td>保存模板</td></tr>
-<tr><td><b>Ctrl+Shift+T</b></td><td>加载模板</td></tr>
 </table>
         """
         QMessageBox.information(self, "快捷键", shortcuts_text)
+
+    def _on_save_project(self):
+        """保存项目"""
+        if not self.file_panel.get_all_data(): # 保存所有已加载的文件
+            QMessageBox.warning(self, "提示", "当前没有数据可保存")
+            return
+            
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "保存项目", "project.svproj",
+            "SpectrumViewer Project (*.svproj);;ZIP Archive (*.zip)"
+        )
+        if not filepath:
+            return
+            
+        try:
+            # 收集所有数据 (file_panel维护的数据)
+            data_list = self.file_panel.get_all_data()
+            
+            # 获取当前样式
+            style_config = self.style_panel.get_style_config()
+            
+            self.project_manager.save_project(
+                path=filepath,
+                data_list=data_list,
+                processing_chain=self.processing_chain,
+                style_config=style_config,
+                description="Saved from SpectrumViewer UI"
+            )
+            QMessageBox.information(self, "保存成功", f"项目已保存到:\n{filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"保存失败:\n{e}")
+
+    def _on_open_project(self):
+        """打开项目"""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "打开项目", "",
+            "SpectrumViewer Project (*.svproj *.zip);;All Files (*.*)"
+        )
+        if not filepath:
+            return
+            
+        try:
+            # 加载项目
+            project_data = self.project_manager.load_project(filepath)
+            
+            data_list = project_data['data_list']
+            chain = project_data['processing_chain']
+            style = project_data['style_config']
+            
+            if not data_list:
+                QMessageBox.warning(self, "提示", "项目中没有数据")
+                return
+                
+            # 更新内部状态
+            self.processing_chain = chain
+            
+            # 加载数据到文件面板
+            self.file_panel.load_data_objects(data_list)
+            
+            # 应用样式
+            self.style_panel.set_style_config(style)
+            
+            # 自动全选并显示
+            self.file_panel._select_all()
+            self._on_overlay_requested(data_list)
+            
+            QMessageBox.information(self, "加载成功", f"已从项目加载 {len(data_list)} 个文件")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "加载失败", f"加载项目失败:\n{e}")
+

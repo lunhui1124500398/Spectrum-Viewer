@@ -755,6 +755,17 @@ class StylePanel(QWidget):
             self.check_legend_frame.setChecked(display['legend_frame'])
         if 'minor_ticks' in display:
             self.check_minor_ticks.setChecked(display['minor_ticks'])
+            
+        # 恢复每条曲线的样式
+        lines_config = config.get('lines', {})
+        for filename, style in lines_config.items():
+            if filename in self.line_widgets:
+                widget = self.line_widgets[filename]
+                widget.set_style(
+                    color=style.get('color'),
+                    linewidth=style.get('linewidth'),
+                    linestyle=style.get('linestyle')
+                )
         
         self.live_preview = old_live
     

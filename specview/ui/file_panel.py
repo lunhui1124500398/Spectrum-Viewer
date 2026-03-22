@@ -252,6 +252,21 @@ class FilePanel(QWidget):
         # 自然排序
         self._sort_file_list()
 
+    def load_data_objects(self, data_list: List[SpectrumData]):
+        """直接加载数据对象列表 (用于项目恢复)"""
+        self.file_list.clear() # 清除现有
+        self.loaded_files.clear()
+        
+        for data in data_list:
+            if data.filepath:
+                self.loaded_files.add(data.filepath)
+            
+            item = FileListItem(data)
+            self.file_list.addItem(item)
+            
+        self._update_stats()
+        self._sort_file_list()
+
     def _sort_file_list(self):
         """对文件列表进行自然排序"""
         import re
